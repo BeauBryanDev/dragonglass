@@ -7,7 +7,7 @@ from collections import Counter
 
 import requests
 
-BASE = os.path.expanduser("~/IceAndFire")
+BASE = "data"
 RAW = os.path.join(BASE, "raw")
 PAGES_PATH = os.path.join(RAW, "pages.jsonl")
 EXTRA_PATH = os.path.join(RAW, "pages_extra.jsonl")

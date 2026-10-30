@@ -218,3 +218,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.env
+
+# Local design notes
+DESIGN.md
+notes.txt
+
+# Data: raw pages, clean corpus, embedding index, logs
+data/
+
+# pipeline/build holds source code, not build output
+!pipeline/build/
+docs
+data

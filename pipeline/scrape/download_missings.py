@@ -4,22 +4,19 @@ import json
 import os
 import time
 
+import pandas as pd
 import requests
 
-BASE = os.path.expanduser("~/IceAndFire")
+BASE = "data"
 RAW = os.path.join(BASE, "raw")
-OUT_PATH = os.path.join(RAW, "pages_fixes.jsonl")
-HINTS_PATH = os.path.join(RAW, "search_hints.jsonl")
+CLEAN = os.path.join(BASE, "clean")
+OUT_PATH = os.path.join(RAW, "pages_missing.jsonl")
+MISS_PATH = os.path.join(RAW, "missing_candidates.jsonl")
 
 API = "https://awoiaf.westeros.org/api.php"
 HEADERS = {"User-Agent": "asoiaf-rag-portfolio/0.1 (academic SongOfIceAndFireMind; contact: bryan.beau.186@gmail.com)"}
 DELAY = 1.5
 MAX_RETRIES = 4
-
-DISAMBIG = ["Aegon Targaryen", "Byron", "Elwood", "Grazdan", "Leo Tyrell",
-            "Lew", "Lyonel", "Maris", "Owen", "Walton"]
-ACCEPTED = ["Yezzan zo Qaggaz", "Torwynd", "Battle at the burning septry", "Pate (ranger)"]
-SEARCH_ONLY = ["Elder Brother", "Lamprey", "Squirrel", "Blane", "Myles"]
 
 
 #%%
@@ -67,13 +64,13 @@ def fetch_page(title):
         time.sleep(DELAY)
 
 
-def search_titles(term):
+def search_candidates(title):
     data = api_get({
         "action": "query",
         "list": "search",
-        "srsearch": term,
+        "srsearch": title,
         "srnamespace": 0,
-        "srlimit": 5,
+        "srlimit": 3,
     })
     return [hit["title"] for hit in data["query"]["search"]]
 
@@ -105,53 +102,64 @@ def read_jsonl(path):
 
 
 #%%
-pages = {}
-for fname in ("pages.jsonl", "pages_extra.jsonl", "pages_missing.jsonl"):
-    for row in read_jsonl(os.path.join(RAW, fname)):
-        pages[row["title"]] = row
-        pages[row["requested_title"]] = row
+have = set()
+for name in ("pages.jsonl", "pages_extra.jsonl"):
+    for row in read_jsonl(os.path.join(RAW, name)):
+        have.add(row["title"])
+        have.add(row["requested_title"])
 
-targets = list(ACCEPTED)
-for name in DISAMBIG:
-    targets += [l for l in pages[name]["links"] if name.lower() in l.lower()]
+chars = pd.read_json(os.path.join(CLEAN, "characters.jsonl"), lines=True)
+battles = pd.read_json(os.path.join(CLEAN, "battles.jsonl"), lines=True)
 
-targets = [t for t in dict.fromkeys(targets) if t not in pages]
-done_pages = {r["requested_title"] for r in read_jsonl(OUT_PATH)}
-pending = [t for t in targets if t not in done_pages]
+targets = {}
+for kind, names in (("character", chars["name"]), ("battle", battles["name"])):
+    for name in names:
+        if name not in have:
+            targets.setdefault(name, kind)
 
-print(len(targets), len(pending))
+done = {r["requested_title"] for r in read_jsonl(OUT_PATH) + read_jsonl(MISS_PATH)}
+pending = [t for t in targets if t not in done]
+
+print(len(targets), len(done), len(pending))
 
 
 #%%
+start = time.time()
 found = 0
+missing = 0
 
-with open(OUT_PATH, "a", encoding="utf-8") as out_file:
-    for title in pending:
+with open(OUT_PATH, "a", encoding="utf-8") as out_file, \
+     open(MISS_PATH, "a", encoding="utf-8") as miss_file:
+
+    for i, title in enumerate(pending, 1):
         record, error = with_retries(fetch_page, title)
-        if record is None:
-            print("missing", title, error)
-        else:
+
+        if record is not None:
             record["requested_title"] = title
-            record["kind"] = "fix"
+            record["kind"] = targets[title]
             record["chars"] = len(record["text_wiki"])
             out_file.write(json.dumps(record, ensure_ascii=False) + "\n")
             out_file.flush()
             found += 1
+        else:
+            candidates, search_error = [], None
+            if error is None:
+                time.sleep(DELAY)
+                candidates, search_error = with_retries(search_candidates, title)
+            miss_file.write(json.dumps({
+                "requested_title": title,
+                "kind": targets[title],
+                "error": error or search_error,
+                "candidates": candidates or [],
+            }, ensure_ascii=False) + "\n")
+            miss_file.flush()
+            missing += 1
+
+        if i % 50 == 0:
+            left = (time.time() - start) / i * (len(pending) - i) / 60
+            print(f"{i}/{len(pending)} found={found} missing={missing} eta_min={left:.1f}")
+
         time.sleep(DELAY)
 
-print("pages", found)
 
-
-#%%
-done_hints = {r["name"] for r in read_jsonl(HINTS_PATH)}
-
-with open(HINTS_PATH, "a", encoding="utf-8") as hint_file:
-    for name in SEARCH_ONLY:
-        if name in done_hints:
-            continue
-        hits, error = with_retries(search_titles, name)
-        hint_file.write(json.dumps({"name": name, "hits": hits or [], "error": error},
-                                   ensure_ascii=False) + "\n")
-        hint_file.flush()
-        print(name, hits, error)
-        time.sleep(DELAY)
+print("done", found, "missing", missing)

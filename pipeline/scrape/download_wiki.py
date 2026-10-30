@@ -5,7 +5,7 @@ import time
 
 import requests
 
-BASE = os.path.expanduser("~/IceAndFire")
+BASE = "data"
 RAW = os.path.join(BASE, "raw")
 PAGES_PATH = os.path.join(RAW, "pages.jsonl")
 OUT_PATH = os.path.join(RAW, "pages_wiki.jsonl")
@@ -41,7 +41,9 @@ def fetch_text(title):
         "redirects": 1,
         "format": "json",
     }
-    resp = requests.get(API, params=params, headers=HEADERS, timeout=60)
+    resp = requests.get(API, params=params, 
+                        headers=HEADERS, 
+                        timeout=60)
     resp.raise_for_status()
     page = next(iter(resp.json()["query"]["pages"].values()))
     if "missing" in page:
